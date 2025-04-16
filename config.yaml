@@ -13,7 +13,7 @@ embedding:
 
 # LLM settings
 llm:
-  model: mistralai/Mistral-7B-Instruct-v0.2 # google/gemma-2b-it, mistralai/Mistral-7B-Instruct-v0.2, openai-community/gpt2
+  model: HuggingFaceH4/zephyr-7b-beta  # A more reliable model for inference API
   search_type: mmr          
   temperature: 0.4
   k: 4

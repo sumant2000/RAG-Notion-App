@@ -3,10 +3,17 @@ import os
 import yaml
 import streamlit as st
 from streamlit_option_menu import option_menu
+import json
+from dotenv import load_dotenv
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+# Add parent directory to path to import modules
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from embedding import Embedding, JSONHandler
 from llm import RAGApp
+
+# Load environment variables
+load_dotenv()
 
 # Initialize session state for chat history
 if "chat_history" not in st.session_state:
@@ -14,16 +21,30 @@ if "chat_history" not in st.session_state:
 
 # User Interface
 st.set_page_config(page_title="RAG Desktop App", layout="wide")
+
+# Custom CSS
 st.markdown(
     """
+    <style>
+    .stMarkdown {color: #000000 !important;}
+    .stTextArea textarea {color: #000000 !important;}
+    </style>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css" rel="stylesheet">
     """,
     unsafe_allow_html=True,
 )
 
-# load config
-with open('config.yaml') as file:
-    config = yaml.safe_load(file.read())
+# Load config
+with open('../config.yaml') as file:
+    config = yaml.safe_load(file)
+
+# Initialize RAG app
+rag_app = RAGApp(
+    embedding_model=config["embedding"]["model"],
+    llm_model=config["llm"]["model"],
+    max_token=config["llm"]["max_token"],
+    temperature=config["llm"]["temperature"]
+)
 
 # Sidebar
 with st.sidebar:
@@ -53,7 +74,7 @@ if selected == "Chat":
     with chat_container:
         for chat in st.session_state.chat_history:
             if chat["user"]:
-                st.markdown(f"**You:** {chat['user']}")
+                st.markdown(f'<div style="color: #000000;"><strong>You:</strong> {chat["user"]}</div>', unsafe_allow_html=True)
             if chat["bot"]:
                 st.markdown(
                     f"""
@@ -61,7 +82,7 @@ if selected == "Chat":
                         <div style='font-size: 24px; margin-right: 10px;'>
                             <i class="fa fa-robot" style="color: #555;"></i>  <!-- Robot-icon -->
                         </div>
-                        <div style='background-color: #f0f0f0; padding: 10px; border-radius: 10px;'>
+                        <div style='background-color: #f0f0f0; padding: 10px; border-radius: 10px; color: #000000;'>
                             {chat["bot"]}
                         </div>
                     </div>
@@ -79,9 +100,6 @@ if selected == "Chat":
 
     send_button = st.button("Send", key="send_button")
 
-    rag_app = RAGApp(embedding_model=config["embedding"]["model"], llm_model=config["llm"]["model"],
-                                      max_token=config["llm"]["max_token"], temperature=config["llm"]["temperature"])
-
     if send_button and user_input.strip():
         # Spinner
         with st.spinner("Generating response..."):
@@ -96,16 +114,16 @@ if selected == "Chat":
         # Update chat history
         st.session_state.chat_history.append({"user": user_input, "bot": response})
         
-        # Dispaly the updated convo
+        # Display the updated convo
         with chat_container:
-            st.markdown(f"**You:** {user_input}")
+            st.markdown(f'<div style="color: #000000;"><strong>You:</strong> {user_input}</div>', unsafe_allow_html=True)
             st.markdown(
                 f"""
                 <div style='display: flex; align-items: flex-start; margin-bottom: 10px;'>
                     <div style='font-size: 24px; margin-right: 10px;'>
                             <i class="fa fa-robot" style="color: #555;"></i>  <!-- Robot-icon -->
                     </div>
-                    <div style='background-color: #f0f0f0; padding: 10px; border-radius: 10px;'>
+                    <div style='background-color: #f0f0f0; padding: 10px; border-radius: 10px; color: #000000;'>
                         {response}
                     </div>
                 </div>
@@ -116,8 +134,8 @@ if selected == "Chat":
 # Setting layout
 elif selected == "Settings":
     st.title("Settings")
-    st.write("Here you can configure the app settings.")
-    st.write("#### Adjust the creativity of responses:")
+    st.markdown('<div style="color: #000000;">Here you can configure the app settings.</div>', unsafe_allow_html=True)
+    st.markdown('<div style="color: #000000;">#### Adjust the creativity of responses:</div>', unsafe_allow_html=True)
     # Temperature slider
     st.session_state.temperature = st.slider(
         "Temperature (0.1-1.0):",   # label

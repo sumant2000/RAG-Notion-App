@@ -7,7 +7,7 @@
 
 # Ignore venv
 /venv/
-
+rag-notion-nextjs/
 # Ignore test
 /test/
 
@@ -18,3 +18,4 @@
 .DS_Store
 
 
+.qodo
