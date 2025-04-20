@@ -1,0 +1,91 @@
+# RAG Application Configuration
+
+# Google Gemini settings
+gemini:
+  model: "gemini-pro"
+  temperature: 0.7
+  max_output_tokens: 2048
+  top_p: 0.95
+  top_k: 40
+
+# Vector store settings
+chroma:
+  persist_directory: "./chroma_db"
+  collection_name: "notion_rag"
+
+# Embeddings settings
+embeddings:
+  model_name: "all-MiniLM-L6-v2"
+  model_kwargs:
+    device: "cpu"
+
+# Document processor settings
+document_processor:
+  chunk_size: 1000
+  chunk_overlap: 200
+  separators:
+    - "\n\n"
+    - "\n"
+    - " "
+    - ""
+
+# Notion settings
+notion:
+  api_base_url: "https://api.notion.com/v1"
+
+# RAG Application Configuration
+
+# Notion API settings
+notion_api:
+  integration_token: ""  # Will be overridden by NOTION_API_KEY env variable
+
+# Google AI settings
+google_ai:
+  api_key: ""  # Will be overridden by GOOGLE_API_KEY env variable
+
+# Embedding settings
+embedding:
+  model_name: "all-mpnet-base-v2"  # HuggingFace model for embeddings
+  chunk_size: 1024  # Size of text chunks for embeddings
+  chunk_overlap: 200  # Overlap between chunks to maintain context
+  model_kwargs:
+    device: "cpu"
+
+# LLM settings
+llm_settings:
+  model_name: "gemini-pro"  # Google's Gemini Pro model
+  temperature: 0.4  # Controls randomness (0-1)
+  max_tokens: 1024  # Maximum tokens for response
+
+# Vector database settings
+vector_db:
+  persist_directory: "chroma_db"  # Directory for persistent storage
+
+# Evaluation LLM settings
+evaluation:
+  max_workers: 2  # the best for my PC spec
+  timeout: 600
+
+# Model Configuration
+model:
+  name: "gemini-pro"
+  temperature: 0.3
+  max_tokens: 1024
+  top_p: 0.95
+
+# Vector Store Configuration
+vector_store:
+  collection_name: "notion_docs"
+  persist_directory: "./chroma_db"
+
+# Retrieval
+retrieval:
+  search_type: "similarity"
+  k: 4
+  score_threshold: 0.5
+
+# Retrieval settings
+retrieval:
+  top_k: 5
+  score_threshold: 0.5
+

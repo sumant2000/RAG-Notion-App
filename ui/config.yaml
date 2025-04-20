@@ -1,0 +1,20 @@
+gemini:
+  model: gemini-pro
+  temperature: 0.2
+  max_output_tokens: 2048
+  top_p: 0.95
+  top_k: 40
+
+chroma:
+  persist_directory: ./chroma_db
+  collection_name: rag_collection
+
+embeddings:
+  model_name: all-MiniLM-L6-v2
+  model_kwargs:
+    device: cpu
+
+document_processor:
+  chunk_size: 1000
+  chunk_overlap: 200
+  separators: ["\n\n", "\n", " ", ""]

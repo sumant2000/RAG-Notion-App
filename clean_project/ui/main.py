@@ -4,14 +4,11 @@ from streamlit_option_menu import option_menu
 from dotenv import load_dotenv, set_key, find_dotenv
 import json
 import logging
-from rag_app import RAGApp
-from config import SIDEBAR_LOGO_PATH, MAIN_LOGO_PATH
-from document_processor import DocumentProcessor
-from notion_processor import NotionProcessor
+from ui.rag_app import RAGApp
+from ui.config import SIDEBAR_LOGO_PATH, MAIN_LOGO_PATH
+from ui.document_processor import DocumentProcessor
+from ui.notion_processor import NotionProcessor
 import pandas as pd
-
-# Page title and configuration
-st.set_page_config(page_title="RAG Chatbot", page_icon="🤖", layout="wide")
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -28,51 +25,11 @@ if "initialized" not in st.session_state:
     st.session_state.notion_api_key = os.getenv("NOTION_API_KEY", "")
     st.session_state.notion_page_ids = os.getenv("NOTION_PAGE_IDS", "")
     st.session_state.integrations = None
-    st.session_state.pages_loaded = False
 
 # Initialize the RAG app
 rag_app = RAGApp()
 document_processor = DocumentProcessor()
 notion_processor = NotionProcessor(document_processor=document_processor)
-
-# Load Notion pages if they haven't been loaded yet
-if not st.session_state.pages_loaded and st.session_state.notion_page_ids:
-    try:
-        # Split the comma-separated page IDs and remove any whitespace
-        page_ids = [pid.strip() for pid in st.session_state.notion_page_ids.split(",") if pid.strip()]
-        if page_ids:
-            with st.spinner(f"Loading {len(page_ids)} Notion pages..."):
-                # Log the exact page IDs being used
-                logger.info(f"Attempting to load Notion pages with IDs: {page_ids}")
-                
-                # Check Notion connection first
-                integrations = notion_processor.list_integrations()
-                if integrations.get("status") == "success":
-                    logger.info("Notion connection verified successfully")
-                    st.success("✅ Connected to Notion successfully")
-                else:
-                    logger.error(f"Notion connection failed: {integrations.get('message')}")
-                    st.error("❌ Failed to connect to Notion")
-                    if "help" in integrations:
-                        st.info(integrations["help"])
-                
-                # Try to load the pages
-                result = rag_app.load_notion_pages(page_ids)
-                if result.get("status") == "success":
-                    chunks_added = result.get("chunks_added", 0)
-                    logger.info(f"Successfully loaded {chunks_added} chunks from Notion pages")
-                    st.session_state.pages_loaded = True
-                    st.success(f"📚 Successfully loaded {chunks_added} chunks from {len(page_ids)} Notion pages")
-                else:
-                    error_msg = result.get("message", "Unknown error")
-                    logger.error(f"Failed to load Notion pages: {error_msg}")
-                    st.error(f"❌ Failed to load Notion pages: {error_msg}")
-                    if "help" in result:
-                        st.info(result["help"])
-    except Exception as e:
-        error_msg = str(e)
-        logger.error(f"Error loading Notion pages: {error_msg}")
-        st.error(f"❌ Error loading Notion pages: {error_msg}")
 
 # Check if Notion integrations need to be loaded
 if st.session_state.notion_api_key and st.session_state.integrations is None:
@@ -82,6 +39,9 @@ if st.session_state.notion_api_key and st.session_state.integrations is None:
             st.session_state.integrations = integrations_result.get("integrations", [])
     except Exception as e:
         logger.error(f"Failed to load Notion integrations: {str(e)}")
+
+# Page title and configuration
+st.set_page_config(page_title="RAG Chatbot", page_icon="🤖", layout="wide")
 
 # Function to update environment variables in .env file
 def update_env_variable(key, value):
@@ -147,11 +107,9 @@ st.markdown("""
 
 # Sidebar
 with st.sidebar:
-    # Logo in sidebar (skip if file is empty)
-    if os.path.exists(SIDEBAR_LOGO_PATH) and os.path.getsize(SIDEBAR_LOGO_PATH) > 0:
+    # Logo in sidebar
+    if os.path.exists(SIDEBAR_LOGO_PATH):
         st.image(SIDEBAR_LOGO_PATH, width=100)
-    else:
-        st.markdown("### RAG Chatbot")
     
     # Navigation menu
     selected = option_menu(
@@ -165,7 +123,7 @@ with st.sidebar:
 # Main content area
 if selected == "Chat":
     # Logo and title
-    if os.path.exists(MAIN_LOGO_PATH) and os.path.getsize(MAIN_LOGO_PATH) > 0:
+    if os.path.exists(MAIN_LOGO_PATH):
         col1, col2 = st.columns([1, 5])
         with col1:
             st.image(MAIN_LOGO_PATH, width=80)
@@ -175,21 +133,6 @@ if selected == "Chat":
     else:
         st.markdown("<h1 class='main-header'>RAG Chatbot</h1>", unsafe_allow_html=True)
         st.markdown("Ask me anything about the documents in my knowledge base.")
-    
-    # Show vector store status
-    stats = rag_app.get_vector_store_stats()
-    doc_count = stats.get("document_count", 0)
-    
-    # Display status with appropriate styling
-    st.markdown("---")
-    if doc_count > 0:
-        st.success(f"📚 Knowledge base contains {doc_count} document chunks")
-    else:
-        if st.session_state.notion_page_ids:
-            st.warning("⚠️ No documents loaded yet. Please check the Settings page for any errors.")
-        else:
-            st.info("ℹ️ No documents in knowledge base. Add Notion pages in the Settings page.")
-    st.markdown("---")
     
     # Chat container
     chat_container = st.container()
@@ -229,24 +172,13 @@ if selected == "Chat":
                 with st.spinner("Thinking..."):
                     response = rag_app.get_response(prompt)
                     
-                    # Debugging: Inspect the response
-                    st.write(response)  # Inspect the response structure
-                    
-                    # Handle potential errors
-                    if "error" in response:
-                        st.error(f"Error: {response['error']}")
-                    else:
-                        # Access the 'answer' key instead of 'response'
-                        answer = response.get("answer", "No response available.")
-                        st.write(answer)
-                    
                     # Display assistant message
-                    st.write(answer)  # Update this line to use the correct key
+                    st.write(response["response"])
                     
                     # Add sources as expandable section if available
-                    if "sources" in response and response["sources"]:
+                    if "source_documents" in response and response["source_documents"]:
                         with st.expander("View Sources"):
-                            for i, doc in enumerate(response["sources"]):
+                            for i, doc in enumerate(response["source_documents"]):
                                 st.markdown(f"**Source {i+1}:**")
                                 st.markdown(doc["content"])
                                 if "metadata" in doc and doc["metadata"]:
@@ -256,8 +188,8 @@ if selected == "Chat":
             
             # Add assistant message to chat
             st.session_state.messages.append({
-                "role": "assistant",
-                "content": response["answer"],
+                "role": "assistant", 
+                "content": response["response"],
                 "source_documents": response.get("source_documents", [])
             })
     
@@ -267,7 +199,7 @@ if selected == "Chat":
         if st.button("Clear Chat"):
             st.session_state.messages = []
             rag_app.clear_chat_history()
-            st.rerun()
+            st.experimental_rerun()
 
 elif selected == "Settings":
     st.markdown("<h1 class='main-header'>Settings</h1>", unsafe_allow_html=True)
@@ -306,11 +238,7 @@ elif selected == "Settings":
                 if "integrations" in integrations and integrations["integrations"]:
                     st.markdown("**Your Notion Integrations:**")
                     for integration in integrations["integrations"]:
-                        if isinstance(integration, dict):
-                            name = integration.get("name", "Unnamed Integration")
-                        else:  # it's just a string
-                            name = str(integration)
-                        st.markdown(f"- {name}")
+                        st.markdown(f"- {integration.get('name', 'Unnamed Integration')}")
                 else:
                     st.info("No integrations found with current API key")
             else:
@@ -345,7 +273,7 @@ elif selected == "Settings":
         
         st.success("Notion settings saved")
         st.info("Reloading application with new settings...")
-        st.rerun()
+        st.experimental_rerun()
     
     # Load Notion pages section
     if st.session_state.notion_api_key:
