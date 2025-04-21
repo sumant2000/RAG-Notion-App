@@ -17,5 +17,7 @@ rag-notion-nextjs/
 # Mac hiden file
 .DS_Store
 
-
+# Ignore model cache directories
+model_cache/
+ui/model_cache/
 .qodo

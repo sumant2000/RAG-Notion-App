@@ -21,6 +21,7 @@ from document_processor import DocumentProcessor
 from vector_store import ChromaVectorStore
 from notion_loader import NotionLoader
 from notion_processor import NotionProcessor
+from notion_api_adapter import NotionAPIAdapter  # Import the new adapter
 import streamlit as st
 
 # Load environment variables
@@ -49,6 +50,12 @@ class RAGApp:
         # Load configuration
         self.config_path = config_path
         self.config = self._load_config(config_path)
+        
+        # Determine if we should use the new NotionAPIAdapter
+        self.use_notion_api_adapter = os.getenv("USE_NOTION_API_ADAPTER", "true").lower() == "true"
+        logger.info(f"Using NotionAPIAdapter: {self.use_notion_api_adapter}")
+        
+        # Initialize components
         self.initialize_components()
         
         logger.info("RAG application initialized successfully")
@@ -124,8 +131,17 @@ class RAGApp:
                 # Initialize Gemini model with basic configuration
                 self.model = genai.GenerativeModel(
                     model_name="gemini-pro",
-                    temperature=self.config.get("gemini", {}).get("temperature", 0.2),
                 )
+                
+                # Get configuration
+                temp = self.config.get("gemini", {}).get("temperature", 0.2)
+                # Set the generation config after model creation
+                self.generation_config = {
+                    "temperature": temp,
+                    "max_output_tokens": self.config.get("gemini", {}).get("max_output_tokens", 2048),
+                    "top_p": self.config.get("gemini", {}).get("top_p", 0.95),
+                    "top_k": self.config.get("gemini", {}).get("top_k", 40)
+                }
                 logger.info("Initialized Gemini Pro model")
             else:
                 logger.error("No API key provided for Gemini. Text generation will not work.")
@@ -157,8 +173,19 @@ class RAGApp:
             )
             logger.info("Initialized document processor")
             
-            # Initialize Notion processor
+            # Get Notion API key
             notion_api_key = os.getenv("NOTION_API_KEY")
+            
+            # Initialize the appropriate Notion processor based on configuration
+            if self.use_notion_api_adapter:
+                # Initialize the NotionAPIAdapter with the advanced RAG implementation
+                self.notion_api_adapter = NotionAPIAdapter(
+                    notion_api_key=notion_api_key,
+                    persist_directory=chroma_config.get("persist_directory", "./chroma_db")
+                )
+                logger.info("Initialized Notion API Adapter (advanced RAG)")
+            
+            # Always initialize the regular NotionProcessor as fallback
             self.notion_processor = NotionProcessor(
                 api_key=notion_api_key,
                 document_processor=self.document_processor
@@ -578,6 +605,19 @@ class RAGApp:
         Returns:
             Dictionary containing the answer and source information
         """
+        # Use the NotionAPIAdapter if enabled
+        if self.use_notion_api_adapter and hasattr(self, 'notion_api_adapter'):
+            try:
+                logger.info(f"Using NotionAPIAdapter to answer question: {query}")
+                response = self.notion_api_adapter.answer_question(query)
+                return response
+            except Exception as e:
+                error_message = str(e)
+                logger.error(f"Error using NotionAPIAdapter: {error_message}")
+                logger.info("Falling back to default implementation")
+                # If the adapter fails, fall back to the default implementation
+        
+        # Default implementation using Gemini
         if not self.model:
             return {
                 "answer": "No LLM available. Please set the GOOGLE_API_KEY environment variable.",
@@ -752,22 +792,27 @@ Do not mention that you're using context or documents in your answer.
         logger.info(f"Loading Notion page: {page_id}")
         
         try:
-            # Process the page using the notion processor
-            result = self.notion_processor.process_page(page_id)
-            
-            if result["status"] == "success":
-                # Add chunks to the vector store
-                chunks = result.get("chunks", [])
-                if chunks:
-                    # Add documents to the vector store
-                    doc_ids = self.add_documents(chunks)
-                    logger.info(f"Added {len(doc_ids)} chunks to vector store")
-                    
-                    result["doc_ids"] = doc_ids
-                
+            # Use the NotionAPIAdapter if enabled
+            if self.use_notion_api_adapter and hasattr(self, 'notion_api_adapter'):
+                result = self.notion_api_adapter.process_page(page_id)
                 return result
             else:
-                return result
+                # Fallback to the original implementation
+                result = self.notion_processor.process_page(page_id)
+                
+                if result["status"] == "success":
+                    # Add chunks to the vector store
+                    chunks = result.get("chunks", [])
+                    if chunks:
+                        # Add documents to the vector store
+                        doc_ids = self.add_documents(chunks)
+                        logger.info(f"Added {len(doc_ids)} chunks to vector store")
+                        
+                        result["doc_ids"] = doc_ids
+                    
+                    return result
+                else:
+                    return result
                 
         except Exception as e:
             error_message = str(e)
@@ -799,22 +844,27 @@ Do not mention that you're using context or documents in your answer.
         logger.info(f"Loading {len(page_ids)} Notion pages")
         
         try:
-            # Process the pages using the notion processor
-            result = self.notion_processor.process_pages(page_ids)
-            
-            if result["status"] == "success":
-                # Add chunks to the vector store
-                chunks = result.get("chunks", [])
-                if chunks:
-                    # Add documents to the vector store
-                    doc_ids = self.add_documents(chunks)
-                    logger.info(f"Added {len(doc_ids)} chunks to vector store")
-                    
-                    result["doc_ids"] = doc_ids
-                
+            # Use the NotionAPIAdapter if enabled
+            if self.use_notion_api_adapter and hasattr(self, 'notion_api_adapter'):
+                result = self.notion_api_adapter.process_pages(page_ids)
                 return result
             else:
-                return result
+                # Fallback to the original implementation
+                result = self.notion_processor.process_pages(page_ids)
+                
+                if result["status"] == "success":
+                    # Add chunks to the vector store
+                    chunks = result.get("chunks", [])
+                    if chunks:
+                        # Add documents to the vector store
+                        doc_ids = self.add_documents(chunks)
+                        logger.info(f"Added {len(doc_ids)} chunks to vector store")
+                        
+                        result["doc_ids"] = doc_ids
+                    
+                    return result
+                else:
+                    return result
                 
         except Exception as e:
             error_message = str(e)
@@ -970,4 +1020,4 @@ Do not mention that you're using context or documents in your answer.
                 "status": "error",
                 "message": f"Error listing Notion integrations: {str(e)}",
                 "help": "Please check your Notion API key and try again."
-            } 
+            }

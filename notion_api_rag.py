@@ -2,39 +2,52 @@ import os
 from typing import List, Dict, Any
 from notion_client import Client
 import chromadb
+import time
 from dotenv import load_dotenv
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_huggingface import HuggingFaceEmbeddings  # Updated to correct package
+from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_chroma import Chroma
-from langchain_huggingface import HuggingFacePipeline  # Changed to HF Pipeline for local models
+from langchain_huggingface import HuggingFacePipeline
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
 from langchain.chains import RetrievalQA
 from langchain.prompts import PromptTemplate
+import functools
 
 # Load environment variables from .env file
 load_dotenv(override=True)
 print("Loading environment variables and initializing the RAG system...")
 
+# Cache for Notion content to avoid repeated API calls
+notion_content_cache = {}
+
 class NotionAPIRAG:
     def __init__(self, notion_token: str, persist_directory: str = "./chroma_db"):
         """Initialize the NotionRAG system with official Notion API."""
+        start_time = time.time()
         self.persist_directory = persist_directory
         
         # Initialize Notion client
         self.notion = Client(auth=notion_token)
         
         # Use local sentence transformer model for embeddings
+        # Set cache_folder to save the model locally for faster loading next time
         self.embeddings = HuggingFaceEmbeddings(
-            model_name="all-MiniLM-L6-v2",  # Small, fast model that doesn't require API key
-            model_kwargs={'device': 'cpu'}
+            model_name="all-MiniLM-L6-v2",
+            model_kwargs={'device': 'cpu'},
+            cache_folder="./model_cache"  # Cache the model locally
         )
+        print(f"Embedding model loaded in {time.time() - start_time:.2f} seconds")
         
-        # Initialize ChromaDB
+        # Initialize ChromaDB with a smaller number of shards for faster operations
+        print("Initializing vector database...")
+        db_start_time = time.time()
         self.db = Chroma(
             persist_directory=persist_directory,
-            embedding_function=self.embeddings
+            embedding_function=self.embeddings,
+            collection_metadata={"hnsw:space": "cosine"}  # Optimize for similarity search
         )
+        print(f"Vector database initialized in {time.time() - db_start_time:.2f} seconds")
         
         # Initialize text splitter for chunking
         self.text_splitter = RecursiveCharacterTextSplitter(
@@ -42,30 +55,58 @@ class NotionAPIRAG:
             chunk_overlap=200
         )
         
-        # Initialize LLM with a local TinyLlama model
+        # Initialize LLM with a local TinyLlama model with optimizations
         print("Loading language model... (this might take a minute)")
-        model_id = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"  # Small model that runs on CPU
-        tokenizer = AutoTokenizer.from_pretrained(model_id)
-        model = AutoModelForCausalLM.from_pretrained(
-            model_id, 
-            torch_dtype=torch.float32,  # Use float32 for CPU
-            device_map="auto"
-        )
+        model_id = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
+        model_start_time = time.time()
+        
+        # Cache the tokenizer and model locally for faster loading
+        cache_dir = "./model_cache"
+        os.makedirs(cache_dir, exist_ok=True)
+        
+        tokenizer = AutoTokenizer.from_pretrained(model_id, cache_dir=cache_dir)
+        
+        # Optimize model loading with 8-bit quantization if supported
+        try:
+            from transformers import BitsAndBytesConfig
+            quantization_config = BitsAndBytesConfig(
+                load_in_8bit=True,
+                bnb_4bit_compute_dtype=torch.float16
+            )
+            model = AutoModelForCausalLM.from_pretrained(
+                model_id,
+                torch_dtype=torch.float16,
+                device_map="auto",
+                cache_dir=cache_dir,
+                quantization_config=quantization_config
+            )
+            print("Using 8-bit quantized model for better performance")
+        except ImportError:
+            # Fall back to regular model loading
+            model = AutoModelForCausalLM.from_pretrained(
+                model_id, 
+                torch_dtype=torch.float32,  # Use float32 for CPU
+                device_map="auto",
+                cache_dir=cache_dir
+            )
+        
         pipe = pipeline(
             "text-generation",
             model=model,
             tokenizer=tokenizer,
             max_new_tokens=512,
-            do_sample=True,  # Enable sampling to use temperature and top_p
+            do_sample=True,
             temperature=0.7,
             top_p=0.95,
             repetition_penalty=1.15
         )
         self.llm = HuggingFacePipeline(pipeline=pipe)
+        print(f"Language model loaded in {time.time() - model_start_time:.2f} seconds")
         
         # Initialize QA chain
         self.qa_chain = self._setup_qa_chain()
-    
+        print(f"Total initialization time: {time.time() - start_time:.2f} seconds")
+        
     def _setup_qa_chain(self) -> RetrievalQA:
         """Set up the QA chain with custom prompt."""
         prompt_template = """
@@ -83,11 +124,17 @@ class NotionAPIRAG:
             input_variables=["context", "question"]
         )
         
-        retriever = self.db.as_retriever(search_kwargs={"k": 3})
+        # Fix: Remove fetch_k parameter which is causing errors with current Chroma version
+        retriever = self.db.as_retriever(
+            search_type="similarity",  # Use similarity search for speed
+            search_kwargs={
+                "k": 3  # Fewer documents = faster processing
+            }
+        )
         
         return RetrievalQA.from_chain_type(
             llm=self.llm,
-            chain_type="stuff",
+            chain_type="stuff",  # 'stuff' is faster than 'map_reduce' for smaller contexts
             retriever=retriever,
             return_source_documents=True,
             chain_type_kwargs={"prompt": PROMPT}
@@ -95,7 +142,15 @@ class NotionAPIRAG:
     
     def extract_page_content(self, page_id: str) -> str:
         """Extract content from a Notion page using the official API."""
+        # Check cache first
+        if page_id in notion_content_cache:
+            print(f"Using cached content for page {page_id}")
+            return notion_content_cache[page_id]
+            
         try:
+            start_time = time.time()
+            print(f"Extracting content from Notion page {page_id}...")
+            
             # Get page properties
             page = self.notion.pages.retrieve(page_id)
             
@@ -108,6 +163,10 @@ class NotionAPIRAG:
             for block in blocks["results"]:
                 content += self._process_block(block)
             
+            # Cache the content for future use
+            notion_content_cache[page_id] = content
+            
+            print(f"Content extraction completed in {time.time() - start_time:.2f} seconds")
             return content
         except Exception as e:
             print(f"Error extracting content from page {page_id}: {e}")
@@ -158,6 +217,13 @@ class NotionAPIRAG:
                 print(f"Error processing child blocks: {e}")
         
         return text
+    
+    # Use caching to avoid re-processing blocks
+    @functools.lru_cache(maxsize=128)
+    def _process_block_cached(self, block_id: str, block_type: str) -> str:
+        """Cached version of block processing to avoid repeated processing."""
+        block = self.notion.blocks.retrieve(block_id)
+        return self._process_block(block)
     
     def page_id_from_url(self, url: str) -> str:
         """Extract page ID from a Notion URL."""
@@ -210,13 +276,26 @@ class NotionAPIRAG:
     
     def answer_question(self, question: str) -> Dict[str, Any]:
         """Answer a question based on the stored Notion documents."""
-        result = self.qa_chain.invoke({"query": question})  # Changed from __call__ to invoke
+        print(f"Processing question: '{question}'")
+        start_time = time.time()
+        
+        # Measure retrieval time separately
+        retrieval_start = time.time()
+        result = self.qa_chain.invoke({"query": question})
+        retrieval_time = time.time() - retrieval_start
         
         # Format the response
         response = {
             "answer": result["result"],
-            "sources": [doc.metadata["source"] for doc in result["source_documents"]]
+            "sources": [doc.metadata["source"] for doc in result["source_documents"]],
+            "timing": {
+                "total_time": time.time() - start_time,
+                "retrieval_time": retrieval_time
+            }
         }
+        
+        print(f"Question answered in {response['timing']['total_time']:.2f} seconds")
+        print(f"  - Retrieval time: {response['timing']['retrieval_time']:.2f} seconds")
         
         return response
 
